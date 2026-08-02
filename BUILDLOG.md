@@ -10,15 +10,16 @@ a before/after loss comparison for each. Each technique = one commit.
 
 ---
 
-## Day 1 — Baseline (pending)
+## Day 1 — Baseline (done, partial run)
 - Architecture: vanilla GPT-2 (learned pos embeddings, LayerNorm, GELU MLP)
-- GPU: Kaggle P100
+- GPU: Kaggle T4 (P100 turned out incompatible with Kaggle's current PyTorch build — sm_60 not supported, sm_70+ required)
 - Precision: fp16 + GradScaler
-- Data: FineWeb-Edu sample, tokenized with tiktoken (gpt2 encoding)
-- Status: pipeline sanity check, not the real baseline run yet
-- Val loss: TBD
-- Notes: TBD (fill in after first run — OOM issues, throughput, anything
-  that didn't match expectations)
+- Steps: 250 / 3000 planned (stopped early — pipeline confirmed working, full run deferred to a later comparison pass)
+- Tokens seen: ~32.8M
+- Train loss: 5.6495
+- Val loss: 5.7123
+- Wall time: 42.7 min (~10.2s/step)
+- Notes: flash_sdp_enabled() printed True on T4 (my prediction of False was wrong — that flag just reports whether flash is toggled on globally, not hardware support; ignore my earlier claim about it)
 
 ## Day 2 — RoPE (not started)
 Replace learned positional embeddings (wpe) with rotary embeddings,
