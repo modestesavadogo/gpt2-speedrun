@@ -18,6 +18,27 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 
+
+
+
+def precompute_rope(head_dim, seq_len, base=10000, device=None):
+    freqs = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    freqs = torch.outer(t, freqs)          # (seq_len, head_dim/2)
+    return torch.cos(freqs), torch.sin(freqs)
+
+
+def apply_rope(x, cos, sin):
+    # x: (B, nh, T, hs) -- rotate pairs of dims by position-dependent angle
+    x1, x2 = x[..., ::2], x[..., 1::2]
+    cos = cos[None, None, :x.size(2), :]
+    sin = sin[None, None, :x.size(2), :]
+    rotated = torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+    return rotated.flatten(-2)
+
+
+
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -78,6 +99,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        q = apply_rope(q, cos, sin)
+        k = apply_rope(k, cos, sin)
+
         if self.flash:
             y = F.scaled_dot_product_attention(
                 q, k, v,
@@ -121,8 +145,8 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, cos, sin):
+        x = x + self.attn(self.ln_1(x), cos, sin)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -137,11 +161,14 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
-                wpe=nn.Embedding(config.block_size, config.n_embd),
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
             )
+        head_dim = config.n_embd // config.n_head
+        cos, sin = precompute_rope(head_dim, config.block_size)
+        self.register_buffer("rope_cos", cos, persistent=False)
+        self.register_buffer("rope_sin", sin, persistent=False)
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # weight tying — wte and lm_head share the same matrix (GPT-2 does this,
@@ -171,13 +198,10 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, (
             f"sequence length {t} exceeds block_size {self.config.block_size}"
         )
-        pos = torch.arange(0, t, dtype=torch.long, device=device)
-
         tok_emb = self.transformer.wte(idx)
-        pos_emb = self.transformer.wpe(pos)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.transformer.drop(tok_emb)
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, self.rope_cos, self.rope_sin)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
