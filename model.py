@@ -135,7 +135,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.relu(x).square()  # ReLU^2, per QK-norm paper instead of GELU
+        x = F.relu(x).square()  # ReLU^2, per QK-norm paper instead of GELU
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
