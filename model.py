@@ -36,7 +36,8 @@ def apply_rope(x, cos, sin):
     rotated = torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
     return rotated.flatten(-2)
 
-
+def rms_norm(x, eps=1e-6):
+    return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
 
 
 @dataclass
@@ -99,8 +100,12 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
-        q = apply_rope(q, cos, sin)
-        k = apply_rope(k, cos, sin)
+        q = apply_rope(q, cos, sin)  #apply RoPE to Q and K, per QK-norm paper
+        k = apply_rope(k, cos, sin) #apply RoPE to Q and K, per QK-norm paper
+
+
+        q = rms_norm(q)  #second normalization after RoPE, per QK-norm paper
+        k = rms_norm(k)  #second normalization after RoPE, per QK-norm paper
 
         if self.flash:
             y = F.scaled_dot_product_attention(
@@ -125,13 +130,12 @@ class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu = nn.GELU()
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.gelu(x)
+        x = self.relu(x).square()  # ReLU^2, per QK-norm paper instead of GELU
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
