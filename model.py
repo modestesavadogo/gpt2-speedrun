@@ -164,7 +164,7 @@ class GPT(nn.Module):
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
-            )
+            ),
         head_dim = config.n_embd // config.n_head
         cos, sin = precompute_rope(head_dim, config.block_size)
         self.register_buffer("rope_cos", cos, persistent=False)
