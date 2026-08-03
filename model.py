@@ -165,11 +165,11 @@ class GPT(nn.Module):
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
             ),
+        )
         head_dim = config.n_embd // config.n_head
         cos, sin = precompute_rope(head_dim, config.block_size)
         self.register_buffer("rope_cos", cos, persistent=False)
         self.register_buffer("rope_sin", sin, persistent=False)
-        )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # weight tying — wte and lm_head share the same matrix (GPT-2 does this,
         # saves ~40M params at this scale and is a well-known regularizer)
