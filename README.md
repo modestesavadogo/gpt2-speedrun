@@ -1,28 +1,43 @@
 # gpt2-speedrun
 
 Reproducing GPT-2 (124M) from the nanoGPT / llm.c / modded-nanogpt lineage,
-on Kaggle P100/2xT4 instead of 8xH100 — so no flash attention, no fp8, no
-bf16 (Pascal/Turing don't support them). Building each modernization
-(RoPE, QK-norm, ReLU², Muon optimizer) by hand, one at a time, instead of
-importing the final speedrun script, so each one is a measured before/after
-rather than a black box.
-
-Progress tracked in [`BUILDLOG.md`](./BUILDLOG.md) — one entry per
-technique, with the loss delta it bought.
+on Kaggle T4 instead of 8xH100 — so no FlexAttention, no fp8, no bf16
+(Turing doesn't support them). Each modernization (RoPE, QK-norm, ReLU²,
+Muon optimizer) implemented by hand, one at a time, with a measured
+before/after — not a black-box import of the final speedrun script.
 
 This is a reproduction/engineering project, not original research: the
-goal is to actually understand each piece of the modern GPT training
-recipe by implementing and measuring it, not to set a new record.
+goal was to actually understand each piece of the modern GPT training
+recipe by implementing and measuring it.
+
+## Results
+
+All runs: same seed, same data slice, same 250-step checkpoint, Kaggle T4,
+fp16 + GradScaler. Full details and caveats for each entry in
+[`BUILDLOG.md`](./BUILDLOG.md) — including where a result is likely still
+within run-to-run noise at this step count.
+
+| Stage | Val loss | Train loss | s/step |
+|---|---|---|---|
+| Baseline (vanilla GPT-2) | 5.7123 | 5.6495 | ~10.3 |
+| + RoPE | 5.2801 | 5.2064 | ~11.1 |
+| + QK-norm, ReLU² | 5.2474 | 5.1919 | ~12.5 |
+| + Muon optimizer | **4.8146** | 4.7338 | ~13.6 |
+
+RoPE and Muon were the two largest single changes; QK-norm/ReLU² gave a
+smaller, more uncertain improvement at this step count.
 
 ## Setup (Kaggle)
 
-1. New notebook -> Settings -> Accelerator: GPU P100 (or 2x T4). Internet: On.
-2. Add a GitHub PAT as a Kaggle Secret if you want the notebook to push
-   commits/checkpoints directly.
-3. First cell:
+Use **T4**, not P100 — Kaggle's current PyTorch build requires CUDA
+capability sm_70+, and P100 (Pascal, sm_60) isn't supported. Found this out
+the hard way on Day 1, worth flagging so nobody else wastes a session on it.
+
+1. New notebook → Notebook options → Accelerator: **GPU T4 x2**. Internet: On.
+2. First cell:
 
 ```bash
-!git clone https://github.com/<you>/gpt2-speedrun.git
+!git clone https://github.com/modestesavadogo/gpt2-speedrun.git
 %cd gpt2-speedrun
 !pip install -r requirements.txt --quiet
 ```
@@ -33,7 +48,7 @@ recipe by implementing and measuring it, not to set a new record.
 # 1. tokenize a data slice (defaults to 50M tokens, FineWeb-Edu sample)
 python prepare_data.py --num_tokens 50_000_000 --out_dir data
 
-# 2. train (fp16 on P100/T4, checkpoints to checkpoints/ckpt.pt)
+# 2. train (fp16 on T4, checkpoints to checkpoints/ckpt.pt)
 python train.py --config configs.kaggle_p100 --data_dir data --out_dir checkpoints
 
 # 3. if a Kaggle session gets cut off mid-run, resume:
@@ -42,26 +57,16 @@ python train.py --config configs.kaggle_p100 --data_dir data --out_dir checkpoin
 
 Each run appends a summary block to `BUILDLOG.md` automatically.
 
-## Why P100/T4 changes the plan
-
-`modded-nanogpt` assumes an 8xH100 node and leans on FlexAttention + FP8,
-neither of which exist on Pascal (P100) or Turing (T4) — no sm80+ tensor
-core support, no bf16 on P100 either. Everything here is plain PyTorch
-(`F.scaled_dot_product_attention` falls back to the `math` kernel on this
-hardware, confirmed via `torch.backends.cuda.flash_sdp_enabled()` at
-startup) so it runs correctly, just slower than the H100 numbers in the
-original repos. The point isn't to match their wall-clock records — it's
-to implement the same techniques and see the effect for myself.
-
 ## Repo layout
 
 ```
-model.py            GPT-2 architecture (nanoGPT-style)
+model.py            GPT-2 architecture: RoPE, QK-norm, ReLU² (nanoGPT-derived base)
+muon.py              Muon optimizer (Newton-Schulz orthogonalized updates)
 prepare_data.py      tokenizes FineWeb-Edu -> train.bin / val.bin
-train.py             training loop, fp16/GradScaler, resumable checkpoints
+train.py             training loop, fp16/GradScaler, dual optimizer (Muon + AdamW), resumable
 configs/
-  kaggle_p100.py     hyperparams sized for 16GB VRAM
-BUILDLOG.md           trace of advancement, one entry per technique
+  kaggle_p100.py     hyperparams sized for 16GB VRAM (name kept for history; runs on T4)
+BUILDLOG.md           trace of advancement, one entry per technique, with numbers
 ```
 
 ## References
@@ -69,3 +74,10 @@ BUILDLOG.md           trace of advancement, one entry per technique
 - [nanoGPT](https://github.com/karpathy/nanoGPT) — Karpathy
 - [llm.c](https://github.com/karpathy/llm.c) — Karpathy
 - [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — Keller Jordan et al., the speedrun this follows
+- Su et al., [RoFormer](https://arxiv.org/abs/2104.09864) (RoPE)
+- Henry et al., [Query-Key Normalization for Transformers](https://arxiv.org/abs/2010.04245)
+- So et al., [Primer](https://arxiv.org/abs/2109.08668) (squared ReLU)
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
