@@ -128,24 +128,25 @@ def main():
     import contextlib
     ctx = torch.cuda.amp.autocast(dtype=amp_dtype) if use_amp else contextlib.nullcontext()
 
-    optimizer = model.configure_optimizers(
+    adamw_optimizer, muon_optimizer = model.configure_optimizers(
         cfg.weight_decay, cfg.learning_rate, (cfg.beta1, cfg.beta2), device_type
     )
     if args.resume and os.path.exists(ckpt_path):
-        optimizer.load_state_dict(checkpoint["optimizer"])
-
+        adamw_optimizer.load_state_dict(checkpoint["adamw_optimizer"])
+        muon_optimizer.load_state_dict(checkpoint["muon_optimizer"])
     t0 = time.time()
     running_mfu = -1.0
 
     for step in range(start_step, cfg.max_steps):
         lr = get_lr(step, cfg.warmup_steps, cfg.lr_decay_steps, cfg.min_lr, cfg.learning_rate)
-        for param_group in optimizer.param_groups:
+        for param_group in adamw_optimizer.param_groups:
             param_group["lr"] = lr
 
         # gradient accumulation to hit the target effective batch size on
         # limited VRAM -- P100 has 16GB, can't fit the "real" batch size in
         # one shot at block_size=1024
-        optimizer.zero_grad(set_to_none=True)
+        adamw_optimizer.zero_grad(set_to_none=True)
+        muon_optimizer.zero_grad(set_to_none=True)
         accum_loss = 0.0
         for micro_step in range(cfg.grad_accum_steps):
             X, Y = get_batch("train", args.data_dir, cfg.block_size, cfg.batch_size, device)
@@ -155,9 +156,11 @@ def main():
             scaler.scale(loss).backward()
             accum_loss += loss.item()
 
-        scaler.unscale_(optimizer)
+        scaler.unscale_(adamw_optimizer)
+        scaler.unscale_(muon_optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-        scaler.step(optimizer)
+        scaler.step(adamw_optimizer)
+        scaler.step(muon_optimizer)
         scaler.update()
 
         if step % cfg.log_interval == 0:
@@ -176,7 +179,8 @@ def main():
 
             checkpoint = {
                 "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
+                "adamw_optimizer": adamw_optimizer.state_dict(),
+                "muon_optimizer": muon_optimizer.state_dict(),
                 "model_args": model_args,
                 "step": step,
                 "best_val_loss": best_val_loss,

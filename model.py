@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from muon import Muon
 
 
 
@@ -220,29 +221,32 @@ class GPT(nn.Module):
 
         return logits, loss
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
-        """Split params into decay/no-decay groups — standard nanoGPT recipe.
-        Only 2D+ tensors (matmul weights) get weight decay; LayerNorm/bias/
-        embeddings don't."""
-        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
-        decay_params = [p for p in param_dict.values() if p.dim() >= 2]
-        nodecay_params = [p for p in param_dict.values() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
-        ]
-        num_decay = sum(p.numel() for p in decay_params)
-        num_nodecay = sum(p.numel() for p in nodecay_params)
-        print(f"decayed params: {len(decay_params)} tensors, {num_decay:,} elements")
-        print(f"non-decayed params: {len(nodecay_params)} tensors, {num_nodecay:,} elements")
 
-        # fused AdamW if available and on CUDA — small free speedup
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, muon_lr=0.02):
+        muon_params, adamw_decay_params, adamw_nodecay_params = [], [], []
+        for pn, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+            if p.dim() >= 2 and "wte" not in pn and "lm_head" not in pn:
+                muon_params.append(p)
+            elif p.dim() >= 2:
+                adamw_decay_params.append(p)   # tied wte/lm_head
+            else:
+                adamw_nodecay_params.append(p) # norms, biases
+
+        print(f"muon params: {len(muon_params)} tensors, {sum(p.numel() for p in muon_params):,} elements")
+        print(f"adamw decay: {len(adamw_decay_params)} tensors, {sum(p.numel() for p in adamw_decay_params):,} elements")
+        print(f"adamw no-decay: {len(adamw_nodecay_params)} tensors, {sum(p.numel() for p in adamw_nodecay_params):,} elements")
+
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device_type == "cuda"
-        extra_args = dict(fused=True) if use_fused else dict()
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        print(f"using fused AdamW: {use_fused}")
-        return optimizer
+        adamw_optimizer = torch.optim.AdamW(
+            [{"params": adamw_decay_params, "weight_decay": weight_decay},
+             {"params": adamw_nodecay_params, "weight_decay": 0.0}],
+            lr=learning_rate, betas=betas, **(dict(fused=True) if use_fused else {}),
+        )
+        muon_optimizer = Muon(muon_params, lr=muon_lr, momentum=0.95)
+        return adamw_optimizer, muon_optimizer
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
