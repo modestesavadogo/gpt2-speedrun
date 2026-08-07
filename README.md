@@ -10,22 +10,39 @@ This is a reproduction/engineering project, not original research: the
 goal was to actually understand each piece of the modern GPT training
 recipe by implementing and measuring it.
 
+## Experimental setup
+
+- Model: GPT-2, 124M params (12 layers, 12 heads, 768 dim, 1024 context)
+- Data: FineWeb-Edu sample, tokenized with tiktoken's GPT-2 BPE, 50M tokens
+- Effective batch size: ~131K tokens/step (batch 8 × grad accum 16 × 1024 context)
+- Optimizer: AdamW (lr 6e-4, weight decay 0.1) for embeddings/norms/biases; Muon (lr 0.02) for attention/MLP matrices where applicable
+- Precision: fp16 with GradScaler
+- Steps per run: 250 (fixed across all four configurations for direct comparison)
+- Seed: 1337
+- GPU: Kaggle T4
+- PyTorch: `2.10.0+cu128`
+
 ## Results
 
-All runs: same seed, same data slice, same 250-step checkpoint, Kaggle T4,
-fp16 + GradScaler. Full details and caveats for each entry in
+All runs: same seed, same data slice, same 250-step checkpoint (setup
+above), fp16 + GradScaler. Full details and caveats for each entry in
 [`BUILDLOG.md`](./BUILDLOG.md) — including where a result is likely still
 within run-to-run noise at this step count.
 
-| Stage | Val loss | Train loss | s/step |
-|---|---|---|---|
-| Baseline (vanilla GPT-2) | 5.7123 | 5.6495 | ~10.3 |
-| + RoPE | 5.2801 | 5.2064 | ~11.1 |
-| + QK-norm, ReLU² | 5.2474 | 5.1919 | ~12.5 |
-| + Muon optimizer | **4.8146** | 4.7338 | ~13.6 |
+| Stage | Val loss | Δ vs. baseline | s/step | Δ vs. baseline |
+|---|---|---|---|---|
+| Baseline (vanilla GPT-2) | 5.7123 | — | ~10.3 | — |
+| + RoPE | 5.2801 | -7.6% | ~11.1 | +7.8% |
+| + QK-norm, ReLU² | 5.2474 | -8.1% | ~12.5 | +21.4% |
+| + Muon optimizer | **4.8146** | **-15.7%** | ~13.6 | +32.0% |
+
+![Training loss curves for all four runs](./loss_curves.png)
 
 RoPE and Muon were the two largest single changes; QK-norm/ReLU² gave a
-smaller, more uncertain improvement at this step count.
+smaller, more uncertain improvement at this step count. Muon buys the
+most loss reduction but also carries the largest compute overhead by this
+point — RoPE has the best loss-improvement-per-compute-cost ratio of the
+three additions.
 
 ## Setup (Kaggle)
 
