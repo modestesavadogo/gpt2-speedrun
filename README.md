@@ -71,12 +71,21 @@ BUILDLOG.md           trace of advancement, one entry per technique, with number
 
 ## References
 
+Code lineage:
 - [nanoGPT](https://github.com/karpathy/nanoGPT) — Karpathy
 - [llm.c](https://github.com/karpathy/llm.c) — Karpathy
 - [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — Keller Jordan et al., the speedrun this follows
+
+Papers and writeups read while building this (not just cited in code):
+- Vaswani et al., [Attention Is All You Need](https://arxiv.org/abs/1706.03762) — origin of sinusoidal positional encoding, ancestor of RoPE's frequency scheme
+- Radford et al., [GPT-2](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) — the model being reproduced
+- Kazemnejad, [Transformer Architecture: The Positional Encoding](https://kazemnejad.com/blog/transformer_architecture_positional_encoding/)
 - Su et al., [RoFormer](https://arxiv.org/abs/2104.09864) (RoPE)
+- EleutherAI, [Rotary Embeddings: A Relative Revolution](https://blog.eleuther.ai/rotary-embeddings/)
 - Henry et al., [Query-Key Normalization for Transformers](https://arxiv.org/abs/2010.04245)
+- Dehghani et al., [Scaling Vision Transformers to 22 Billion Parameters](https://arxiv.org/abs/2302.14103) (QK-norm needed at scale)
 - So et al., [Primer](https://arxiv.org/abs/2109.08668) (squared ReLU)
+- Touvron et al., [LLaMA](https://arxiv.org/abs/2302.13971) — RoPE, RMSNorm, SwiGLU used together in a production model
 
 ## License
 
